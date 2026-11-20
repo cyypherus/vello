@@ -763,11 +763,6 @@ impl Scene {
                     let (shift_x, shift_y) = filter_data.source_shift();
                     Affine::translate((f64::from(shift_x), f64::from(shift_y)))
                 });
-        self.root_transforms.push_root(relative_root_transform);
-        if let Some(filter_plan) = &filter_data {
-            self.viewport_state.push_root_viewport(filter_plan);
-        }
-
         let clip_path = clip_path.map(|path| {
             let mut strip_storage = self.strip_storage.borrow_mut();
             let strip_start = strip_storage.strips.len();
@@ -791,6 +786,11 @@ impl Scene {
                     }
                 })
         });
+
+        self.root_transforms.push_root(relative_root_transform);
+        if let Some(filter_plan) = &filter_data {
+            self.viewport_state.push_root_viewport(filter_plan);
+        }
 
         self.recorder.push_layer(
             LayerProps {
@@ -1121,6 +1121,46 @@ mod tests {
         };
         assert_eq!(rect.rect, Rect::new(20.5, 20.25, 50.5, 60.75));
         assert!(scene.strip_storage.borrow().strips.is_empty());
+    }
+
+    #[test]
+    fn filtered_layer_clip_uses_parent_coordinates() {
+        use vello_common::filter_effects::{EdgeMode, Filter, FilterPrimitive};
+        use vello_common::kurbo::Shape;
+
+        let bounds = Rect::new(0.0, 0.0, 128.0, 128.0).to_path(0.1);
+        let clip = Rect::new(32.0, 36.0, 64.0, 68.0);
+        for path in [false, true] {
+            let record_clip = |filter| {
+                let mut scene = Scene::new(128, 128);
+                if path {
+                    scene.push_clip_path(&clip.to_path(0.1));
+                } else {
+                    scene.push_clip_rect(&clip);
+                }
+                scene.push_layer(Some(&bounds), None, None, None, filter);
+                scene.set_paint(BLUE);
+                scene.fill_rect(&clip);
+                scene.pop_layer();
+                scene.pop_clip();
+                scene.recorder.layers[0]
+                    .props
+                    .clip_path
+                    .as_ref()
+                    .unwrap()
+                    .bbox
+            };
+            let blur = Filter::from_primitive(FilterPrimitive::GaussianBlur {
+                std_deviation_x: 4.0,
+                std_deviation_y: 4.0,
+                edge_mode: EdgeMode::None,
+            });
+            assert_eq!(
+                record_clip(Some(blur)),
+                record_clip(None),
+                "path clip: {path}"
+            );
+        }
     }
 
     #[test]
